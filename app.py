@@ -9,18 +9,14 @@ from openpyxl import load_workbook
 def read_excel_skipping_hidden_rows(file_stream) -> pd.DataFrame:
     wb = load_workbook(file_stream, data_only=True)
     ws = wb.active
-
-    # 첫 번째 행을 헤더로 사용
     headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
-
-    # 숨겨진 행 제외
     data = []
     for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
         if not ws.row_dimensions[i].hidden:
             data.append([cell.value for cell in row])
-
     return pd.DataFrame(data, columns=headers)
 
+# Streamlit 페이지 설정
 st.set_page_config(page_title="건강검진 자가설문지 정리", layout="wide")
 st.markdown("<h1 style='text-align: center;'>🏥 건강검진 자가설문지 정리</h1>", unsafe_allow_html=True)
 st.write("엑셀 파일을 업로드하면, 줄바꿈 포함 정리 엑셀 파일을 다운받을 수 있습니다.")
@@ -30,7 +26,7 @@ password = st.text_input("🔐 파일에 비밀번호가 있을 경우 입력하
 
 if uploaded_file is not None:
     try:
-        # 파일 읽기 및 암호 해제 처리
+        # 파일 읽기
         if password:
             office_file = msoffcrypto.OfficeFile(uploaded_file)
             office_file.load_key(password=password)
@@ -47,7 +43,8 @@ if uploaded_file is not None:
             '이름': 'Name',
             '생년월일': 'Date of Birth',
             '성별': 'SEX',
-            '소속기관': 'Organization'
+            '소속기관': 'Organization',
+            '소속기관 및 부서명': 'Organization and Department'
         }
         info_cols = []
         for kor, eng in possible_info_cols.items():
@@ -105,34 +102,44 @@ if uploaded_file is not None:
         st.markdown(f"<h5>👥 총 설문자 수: <span style='color:#0066cc'>{len(summary_df)}명</span></h5>", unsafe_allow_html=True)
         st.dataframe(summary_df, use_container_width=True)
 
+        # 요약 보기
         st.markdown("## 📋 응답 요약 보기")
         for idx, row in summary_df.iterrows():
             name = row.get('이름') or row.get('Name', '이름 없음')
             birth = row.get('생년월일') or row.get('Date of Birth', '생년월일 없음')
-            org = row.get('소속기관') or row.get('Organization', '소속 없음')
+
+            # 생년월일 형식 정리
+            if isinstance(birth, pd.Timestamp) or isinstance(birth, datetime.date):
+                birth = birth.strftime("%Y-%m-%d")
+            elif isinstance(birth, str) and "00:00:00" in birth:
+                birth = birth.split(" ")[0]
+
+            # 소속 처리 (우선순위 순으로 탐색)
+            org_keys = ['소속기관 및 부서명', '소속기관', '소속', 'Organization']
+            org = next((row.get(k) for k in org_keys if k in row and pd.notna(row.get(k))), '소속 없음')
 
             st.markdown(f"""
                 <h4 style='margin-bottom:0.2em;'>🔹 {idx+1}. <span style="color:#333;">{name} ({birth})</span></h4>
                 <p style='margin-top:0; margin-bottom:0.5em;'>소속기관: <b>{org}</b></p>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
             if row["'예'_응답_항목"]:
                 st.markdown(f"""
-                    <div style='background-color:#e6f4ea; padding:10px; border-radius:8px; margin-bottom:8px;'>
-                    ✅ <b>'예' 응답 항목:</b><br>{row["'예'_응답_항목"].replace(chr(10), '<br>')}
-                    </div>
+                <div style='background-color:#e6f4ea; padding:10px; border-radius:8px; margin-bottom:8px;'>
+                ✅ <b>'예' 응답 항목:</b><br>{row["'예'_응답_항목"].replace(chr(10), '<br>')}
+                </div>
                 """, unsafe_allow_html=True)
 
             if row["기타_응답"]:
                 st.markdown(f"""
-                    <div style='background-color:#fdf3e6; padding:10px; border-radius:8px; margin-bottom:8px;'>
-                    📝 <b>기타 응답:</b><br>{row['기타_응답'].replace(chr(10), '<br>')}
-                    </div>
+                <div style='background-color:#fdf3e6; padding:10px; border-radius:8px; margin-bottom:8px;'>
+                📝 <b>기타 응답:</b><br>{row['기타_응답'].replace(chr(10), '<br>')}
+                </div>
                 """, unsafe_allow_html=True)
 
             st.markdown("<hr style='border:1px solid #ddd;'>", unsafe_allow_html=True)
 
-        # 엑셀 저장 및 다운로드
+        # 파일 저장 및 다운로드
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             summary_df.to_excel(writer, index=False, sheet_name='응답요약')
